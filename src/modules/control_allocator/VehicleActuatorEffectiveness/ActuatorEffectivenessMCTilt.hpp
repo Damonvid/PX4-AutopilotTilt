@@ -37,6 +37,9 @@
 #include "ActuatorEffectivenessRotors.hpp"
 #include "ActuatorEffectivenessTilts.hpp"
 
+#include <uORB/topics/actuator_controls.h>
+#include <uORB/Subscription.hpp>
+
 class ActuatorEffectivenessMCTilt : public ModuleParams, public ActuatorEffectiveness
 {
 public:
@@ -74,5 +77,11 @@ protected:
 		bool tilt_yaw_neg;
 	};
 
+	float _last_tilt_control{NAN};
+	bool _tilt_updated{true};
+
 	YawTiltSaturationFlags _yaw_tilt_saturation_flags{};
+	uORB::Subscription _actuator_controls_0_sub{ORB_ID(actuator_controls_0)};
+
+	DEFINE_PARAMETERS((ParamInt<px4::params::MC_PITCH_ON_TILT>)   _param_mpc_pitch_on_tilt   /**< map the pitch angle on the tilt */);
 };

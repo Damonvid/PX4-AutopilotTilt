@@ -28,12 +28,12 @@
 
 . ${R}etc/init.d/rc.mc_defaults
 
-param set-default SYS_CTRL_ALLOC 1 #dynamic allocation
+#param set-default SYS_CTRL_ALLOC 1 #dynamic allocation
 param set-default CA_AIRFRAME 8 #11 #11 Tilting Multirotor, 0 multirotor
 
 set MAV_TYPE 2 #quad #14 #octorotor (0 is generic)
 param set-default MC_PITCH_ON_TILT 1
-param set-default CA_TILTING_TYPE 0
+#param set-default CA_TILTING_TYPE 0
 
 #set MIXER generic_tilting_sitl
 #set MIXER_AUX generic_tilting_sitl

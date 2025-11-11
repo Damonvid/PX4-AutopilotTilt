@@ -51,7 +51,9 @@ ActuatorEffectivenessMCTilt::getEffectivenessMatrix(Configuration &configuration
 	}
 
 	// MC motors
-	_mc_rotors.enableYawByDifferentialThrust(!_tilts.hasYawControl());
+	if (!_param_mpc_pitch_on_tilt.get()){//h tilt support
+		_mc_rotors.enableYawByDifferentialThrust(!_tilts.hasYawControl());
+	}
 	const bool rotors_added_successfully = _mc_rotors.addActuators(configuration);
 
 	// Tilts
@@ -62,14 +64,16 @@ ActuatorEffectivenessMCTilt::getEffectivenessMatrix(Configuration &configuration
 	// Set offset such that tilts point upwards when control input == 0 (trim is 0 if min_angle == -max_angle).
 	// Note that we don't set configuration.trim here, because in the case of trim == +-1, yaw is always saturated
 	// and reduced to 0 with the sequential desaturation method. Instead we add it after.
-	_tilt_offsets.setZero();
+	if (!_param_mpc_pitch_on_tilt.get()){//h tilt support
+		_tilt_offsets.setZero();
 
-	for (int i = 0; i < _tilts.count(); ++i) {
-		float delta_angle = _tilts.config(i).max_angle - _tilts.config(i).min_angle;
+		for (int i = 0; i < _tilts.count(); ++i) {
+			float delta_angle = _tilts.config(i).max_angle - _tilts.config(i).min_angle;
 
-		if (delta_angle > FLT_EPSILON) {
-			float trim = -1.f - 2.f * _tilts.config(i).min_angle / delta_angle;
-			_tilt_offsets(_first_tilt_idx + i) = trim;
+			if (delta_angle > FLT_EPSILON) {
+				float trim = -1.f - 2.f * _tilts.config(i).min_angle / delta_angle;
+				_tilt_offsets(_first_tilt_idx + i) = trim;
+			}
 		}
 	}
 
@@ -80,9 +84,40 @@ void ActuatorEffectivenessMCTilt::updateSetpoint(const matrix::Vector<float, NUM
 		int matrix_index, ActuatorVector &actuator_sp, const matrix::Vector<float, NUM_ACTUATORS> &actuator_min,
 		const matrix::Vector<float, NUM_ACTUATORS> &actuator_max)
 {
-	actuator_sp += _tilt_offsets;
-	// TODO: dynamic matrix update
+	if (!_param_mpc_pitch_on_tilt.get()){//h tilt support
+		actuator_sp += _tilt_offsets;
+		// TODO: dynamic matrix update
+	}
+	else
+	{//h tilt support
+		actuator_controls_s actuator_controls_0;
+		if (_actuator_controls_0_sub.copy(&actuator_controls_0)){//depcrated here in v1.6 _actuator_controls_0_sub
 
+			float tilt_sp = actuator_controls_0.control[actuator_controls_s::INDEX_FLAPS];
+
+			//TO DO: change min e max with the servo limits
+			tilt_sp = tilt_sp < -0.99f ? -1.f : tilt_sp;
+			tilt_sp = tilt_sp > 0.99f ? 1.f : tilt_sp;
+
+			// initialize _last_tilt_control
+			if (!PX4_ISFINITE(_last_tilt_control)) {
+				_last_tilt_control = tilt_sp;
+
+			// To DO: check if 0.02f is a good threshold
+			} else if (fabsf(tilt_sp - _last_tilt_control) > 0.02f) {
+				_tilt_updated = true;
+				_last_tilt_control = tilt_sp;
+			}
+
+			for (int i = 0; i < _tilts.count(); ++i) {
+				if (_tilts.config(i).tilt_direction == ActuatorEffectivenessTilts::TiltDirection::TowardsFront) {
+					actuator_sp(i + _first_tilt_idx) += tilt_sp;
+				}
+			}
+		}
+	}
+
+	//mc tilt 1.16 new code
 	bool yaw_saturated_positive = true;
 	bool yaw_saturated_negative = true;
 
@@ -112,6 +147,8 @@ void ActuatorEffectivenessMCTilt::updateSetpoint(const matrix::Vector<float, NUM
 
 	_yaw_tilt_saturation_flags.tilt_yaw_neg = yaw_saturated_negative;
 	_yaw_tilt_saturation_flags.tilt_yaw_pos = yaw_saturated_positive;
+	//mc tilt 1.16 new code end
+
 }
 
 void ActuatorEffectivenessMCTilt::getUnallocatedControl(int matrix_index, control_allocator_status_s &status)

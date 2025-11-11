@@ -48,6 +48,7 @@ MulticopterRateControl::MulticopterRateControl(bool vtol) :
 	WorkItem(MODULE_NAME, px4::wq_configurations::rate_ctrl),
 	_vehicle_torque_setpoint_pub(vtol ? ORB_ID(vehicle_torque_setpoint_virtual_mc) : ORB_ID(vehicle_torque_setpoint)),
 	_vehicle_thrust_setpoint_pub(vtol ? ORB_ID(vehicle_thrust_setpoint_virtual_mc) : ORB_ID(vehicle_thrust_setpoint)),
+	_actuators_0_pub(vtol ? ORB_ID(actuator_controls_virtual_mc) : ORB_ID(actuator_controls_0)),
 	_loop_perf(perf_alloc(PC_ELAPSED, MODULE_NAME": cycle"))
 {
 	_vehicle_status.vehicle_type = vehicle_status_s::VEHICLE_TYPE_ROTARY_WING;
@@ -174,6 +175,7 @@ MulticopterRateControl::Run()
 				vehicle_rates_setpoint.timestamp = hrt_absolute_time();
 
 				_vehicle_rates_setpoint_pub.publish(vehicle_rates_setpoint);
+
 			}
 
 		} else if (_vehicle_rates_setpoint_sub.update(&vehicle_rates_setpoint)) {
@@ -183,6 +185,19 @@ MulticopterRateControl::Run()
 				_rates_setpoint(2) = PX4_ISFINITE(vehicle_rates_setpoint.yaw)   ? vehicle_rates_setpoint.yaw   : rates(2);
 				_thrust_setpoint = Vector3f(vehicle_rates_setpoint.thrust_body);
 			}
+
+			/*** CUSTOM ***/
+			tilting_servo_sp_s tilting_servo_sp;
+
+			// PX4_INFO("tilt_sp: %f \n", (double)vehicle_rates_setpoint.tilt_servo);
+			if(_param_mpc_pitch_on_tilt.get()){
+				if(_tilting_servo_sp_sub.update(&tilting_servo_sp))
+					_tilting_angle_sp = tilting_servo_sp.angle[0];
+				}
+				else
+					_tilting_angle_sp = tilting_servo_sp.angle[0] = 0.0f;
+
+			/*** END-CUSTOM ***/
 		}
 
 		// run the rate controller
@@ -236,6 +251,18 @@ MulticopterRateControl::Run()
 			vehicle_torque_setpoint.xyz[0] = PX4_ISFINITE(torque_setpoint(0)) ? torque_setpoint(0) : 0.f;
 			vehicle_torque_setpoint.xyz[1] = PX4_ISFINITE(torque_setpoint(1)) ? torque_setpoint(1) : 0.f;
 			vehicle_torque_setpoint.xyz[2] = PX4_ISFINITE(torque_setpoint(2)) ? torque_setpoint(2) : 0.f;
+
+			//custom
+			/*** CUSTOM ***/
+			actuator_controls_s actuators{};
+			if(_param_mpc_pitch_on_tilt.get()){
+				actuators.control[actuator_controls_s::INDEX_FLAPS] = PX4_ISFINITE(_tilting_angle_sp) ? _tilting_angle_sp : 0.0f;
+			}
+			actuators.timestamp_sample = angular_velocity.timestamp_sample;
+			actuators.timestamp = hrt_absolute_time();
+			_actuators_0_pub.publish(actuators);
+
+			/*** END-CUSTOM ***/
 
 			// scale setpoints by battery status if enabled
 			if (_param_mc_bat_scale_en.get()) {

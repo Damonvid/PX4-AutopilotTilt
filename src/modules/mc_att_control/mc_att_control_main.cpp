@@ -134,7 +134,7 @@ MulticopterAttitudeControl::throttle_curve(float throttle_stick_input)
 }
 
 void
-MulticopterAttitudeControl::generate_attitude_setpoint(const Quatf &q, float dt)
+MulticopterAttitudeControl::generate_attitude_setpoint(const Quatf &q, float dt, bool reset_yaw_sp)
 {
 	vehicle_attitude_setpoint_s attitude_setpoint{};
 
@@ -146,10 +146,27 @@ MulticopterAttitudeControl::generate_attitude_setpoint(const Quatf &q, float dt)
 	}
 
 	const float yaw = Eulerf(q).psi();
+
+	/* reset yaw setpoint to current position if needed */
+	if (reset_yaw_sp) {
+		_man_yaw_sp = yaw;
+
+	} else if (math::constrain(_manual_control_setpoint.throttle, 0.0f, 1.0f) > 0.05f
+		   || _param_mc_airmode.get() == 2) {
+
+		const float yaw_rate = math::radians(_param_mc_rollrate_max.get());
+		attitude_setpoint.yaw_sp_move_rate = _manual_control_setpoint.yaw * yaw_rate;
+		_man_yaw_sp = wrap_pi(_man_yaw_sp + attitude_setpoint.yaw_sp_move_rate * dt);
+	}
+
+
+	/*
 	const float yaw_stick_input = math::expo_deadzone(_manual_control_setpoint.yaw, _param_mpc_yaw_expo.get(),
 				      _param_mpc_hold_dz.get());
 	_stick_yaw.generateYawSetpoint(attitude_setpoint.yaw_sp_move_rate, _yaw_setpoint_stabilized, yaw_stick_input, yaw, dt,
 				       _unaided_heading);
+
+	*/
 
 	/*
 	 * Input mapping for roll & pitch setpoints
@@ -172,34 +189,81 @@ MulticopterAttitudeControl::generate_attitude_setpoint(const Quatf &q, float dt)
 	if (v_norm > _man_tilt_max) { // limit to the configured maximum tilt angle
 		v *= _man_tilt_max / v_norm;
 	}
+	Quatf q_sp_rpy = AxisAnglef(v(0), v(1), 0.f);
+	Eulerf euler_sp = q_sp_rpy;
+	attitude_setpoint.roll_body = euler_sp(0);
+	attitude_setpoint.pitch_body = euler_sp(1);
+	//Quatf q_sp_rp = AxisAnglef(v(0), v(1), 0.f);
 
-	Quatf q_sp_rp = AxisAnglef(v(0), v(1), 0.f);
-	// Make sure there's a valid attitude quaternion with no yaw error when yaw is unlocked (NAN)
-	const float yaw_setpoint = PX4_ISFINITE(_yaw_setpoint_stabilized) ? _yaw_setpoint_stabilized : yaw;
+	tilting_servo_sp_s servo_sp;//damon scream test
+	if (_param_mpc_pitch_on_tilt.get()){
+
+		servo_sp.angle[0] = attitude_setpoint.pitch_body;
+		attitude_setpoint.pitch_body = 0.0f;
+
+	}
+
+	//// Make sure there's a valid attitude quaternion with no yaw error when yaw is unlocked (NAN)
+	//const float yaw_setpoint = PX4_ISFINITE(_yaw_setpoint_stabilized) ? _yaw_setpoint_stabilized : yaw;
 	// The axis angle can change the yaw as well (noticeable at higher tilt angles).
 	// This is the formula by how much the yaw changes:
 	//   let a := tilt angle, b := atan(y/x) (direction of maximum tilt)
 	//   yaw = atan(-2 * sin(b) * cos(b) * sin^2(a/2) / (1 - 2 * cos^2(b) * sin^2(a/2))).
-	const Quatf q_sp_yaw(cosf(yaw_setpoint / 2.f), 0.f, 0.f, sinf(yaw_setpoint / 2.f));
+
+	attitude_setpoint.yaw_body = _man_yaw_sp + euler_sp(2);
+	//const Quatf q_sp_yaw(cosf(yaw_setpoint / 2.f), 0.f, 0.f, sinf(yaw_setpoint / 2.f));
+
 
 	if (_vtol) {
-		// Modify the setpoints for roll and pitch such that they reflect the user's intention even
-		// if a large yaw error(yaw_sp - yaw) is present. In the presence of a yaw error constructing
-		// an attitude setpoint from the yaw setpoint will lead to unexpected attitude behaviour from
-		// the user's view as the tilt will not be aligned with the heading of the vehicle.
+		// Construct attitude setpoint rotation matrix. Modify the setpoints for roll
+		// and pitch such that they reflect the user's intention even if a large yaw error
+		// (yaw_sp - yaw) is present. In the presence of a yaw error constructing a rotation matrix
+		// from the pure euler angle setpoints will lead to unexpected attitude behaviour from
+		// the user's view as the euler angle sequence uses the  yaw setpoint and not the current
+		// heading of the vehicle.
+		// However there's also a coupling effect that causes oscillations for fast roll/pitch changes
+		// at higher tilt angles, so we want to avoid using this on multicopters.
+		// The effect of that can be seen with:
+		// - roll/pitch into one direction, keep it fixed (at high angle)
+		// - apply a fast yaw rotation
+		// - look at the roll and pitch angles: they should stay pretty much the same as when not yawing
 
-		AttitudeControlMath::correctTiltSetpointForYawError(q_sp_rp, q, q_sp_yaw);
+		// calculate our current yaw error
+		float yaw_error = wrap_pi(attitude_setpoint.yaw_body - yaw);
+
+		// compute the vector obtained by rotating a z unit vector by the rotation
+		// given by the roll and pitch commands of the user
+		Vector3f zB = {0.0f, 0.0f, 1.0f};
+		Dcmf R_sp_roll_pitch = Eulerf(attitude_setpoint.roll_body, attitude_setpoint.pitch_body, 0.0f);
+		Vector3f z_roll_pitch_sp = R_sp_roll_pitch * zB;
+
+		// transform the vector into a new frame which is rotated around the z axis
+		// by the current yaw error. this vector defines the desired tilt when we look
+		// into the direction of the desired heading
+		Dcmf R_yaw_correction = Eulerf(0.0f, 0.0f, -yaw_error);
+		z_roll_pitch_sp = R_yaw_correction * z_roll_pitch_sp;
+
+		// use the formula z_roll_pitch_sp = R_tilt * [0;0;1]
+		// R_tilt is computed from_euler; only true if cos(roll) not equal zero
+		// -> valid if roll is not +-pi/2;
+		attitude_setpoint.roll_body = -asinf(z_roll_pitch_sp(1));
+		attitude_setpoint.pitch_body = atan2f(z_roll_pitch_sp(0), z_roll_pitch_sp(2));
 	}
 
+	Quatf q_sp = Eulerf(attitude_setpoint.roll_body, attitude_setpoint.pitch_body, attitude_setpoint.yaw_body);
 	// Align the desired tilt with the yaw setpoint
-	Quatf q_sp = q_sp_yaw * q_sp_rp;
-
+	//Quatf q_sp = q_sp_yaw * q_sp_rp;
 	q_sp.copyTo(attitude_setpoint.q_d);
 
 	attitude_setpoint.thrust_body[2] = -throttle_curve(_manual_control_setpoint.throttle);
 
 	attitude_setpoint.timestamp = hrt_absolute_time();
 	_vehicle_attitude_setpoint_pub.publish(attitude_setpoint);
+
+	/*** CUSTOM ***/
+	servo_sp.timestamp = hrt_absolute_time();
+	_tilting_servo_pub.publish(servo_sp);
+	/*** END-CUSTOM ***/
 }
 
 void
@@ -223,6 +287,9 @@ MulticopterAttitudeControl::Run()
 		parameters_updated();
 	}
 
+	// run controller on attitude updates
+	vehicle_attitude_s v_att;
+
 	// Update hover thrust for stick scaling
 	if (_hover_thrust_estimate_sub.updated()) {
 		hover_thrust_estimate_s hover_thrust_estimate;
@@ -237,9 +304,6 @@ MulticopterAttitudeControl::Run()
 			}
 		}
 	}
-
-	// run controller on attitude updates
-	vehicle_attitude_s v_att;
 
 	if (_vehicle_attitude_sub.update(&v_att)) {
 
@@ -284,6 +348,8 @@ MulticopterAttitudeControl::Run()
 			}
 		}
 
+		bool attitude_setpoint_generated = false;
+
 		// during transitions VTOL module generates attitude setpoints
 		const bool is_hovering = (_vehicle_type_rotary_wing && !_vtol_in_transition_mode);
 		const bool is_tailsitter_transition = (_vtol_tailsitter && _vtol_in_transition_mode);
@@ -298,13 +364,14 @@ MulticopterAttitudeControl::Run()
 			    !_vehicle_control_mode.flag_control_velocity_enabled &&
 			    !_vehicle_control_mode.flag_control_position_enabled) {
 
-				generate_attitude_setpoint(q, dt);
+				generate_attitude_setpoint(q, dt, _reset_yaw_sp);
+				attitude_setpoint_generated = true;
 
 			} else {
 				_man_roll_input_filter.reset(0.f);
 				_man_pitch_input_filter.reset(0.f);
-				_yaw_setpoint_stabilized = NAN;
-				_stick_yaw.reset(Eulerf(q).psi(), _unaided_heading);
+				//_yaw_setpoint_stabilized = NAN;
+				//_stick_yaw.reset(Eulerf(q).psi(), _unaided_heading);
 			}
 
 			// Check for new attitude setpoint
@@ -362,14 +429,14 @@ MulticopterAttitudeControl::Run()
 			rates_setpoint.yaw = rates_sp(2);
 			_thrust_setpoint_body.copyTo(rates_setpoint.thrust_body);
 			rates_setpoint.timestamp = hrt_absolute_time();
-
 			_vehicle_rates_setpoint_pub.publish(rates_setpoint);
 
 		} else {
 			_man_roll_input_filter.reset(0.f);
 			_man_pitch_input_filter.reset(0.f);
-			_yaw_setpoint_stabilized = NAN;
-			_stick_yaw.reset(Eulerf(q).psi(), _unaided_heading);
+			//_yaw_setpoint_stabilized = NAN;
+			//_stick_yaw.reset(Eulerf(q).psi(), _unaided_heading);
+			_reset_yaw_sp = !attitude_setpoint_generated || _landed || (_vtol && _vtol_in_transition_mode);
 		}
 
 		if (_landed) {

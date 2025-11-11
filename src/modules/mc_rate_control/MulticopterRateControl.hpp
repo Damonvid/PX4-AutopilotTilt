@@ -60,6 +60,9 @@
 #include <uORB/topics/vehicle_status.h>
 #include <uORB/topics/vehicle_thrust_setpoint.h>
 #include <uORB/topics/vehicle_torque_setpoint.h>
+#include <uORB/topics/actuator_controls.h>
+
+#include <uORB/topics/tilting_servo_sp.h>
 
 using namespace time_literals;
 
@@ -104,11 +107,13 @@ private:
 
 	uORB::SubscriptionCallbackWorkItem _vehicle_angular_velocity_sub{this, ORB_ID(vehicle_angular_velocity)};
 
+
 	uORB::Publication<actuator_controls_status_s>	_actuator_controls_status_pub{ORB_ID(actuator_controls_status_0)};
 	uORB::PublicationMulti<rate_ctrl_status_s>	_controller_status_pub{ORB_ID(rate_ctrl_status)};
 	uORB::Publication<vehicle_rates_setpoint_s>	_vehicle_rates_setpoint_pub{ORB_ID(vehicle_rates_setpoint)};
 	uORB::Publication<vehicle_torque_setpoint_s>	_vehicle_torque_setpoint_pub;
 	uORB::Publication<vehicle_thrust_setpoint_s>	_vehicle_thrust_setpoint_pub;
+	uORB::Publication<actuator_controls_s>		_actuators_0_pub;
 
 	vehicle_control_mode_s	_vehicle_control_mode{};
 	vehicle_status_s	_vehicle_status{};
@@ -129,6 +134,11 @@ private:
 
 	float _energy_integration_time{0.0f};
 	float _control_energy[4] {};
+
+	/*** CUSTOM ***/
+	uORB::Subscription _tilting_servo_sp_sub{ORB_ID(tilting_servo_setpoint)};
+	float _tilting_angle_sp{0.0f}; /**< [rad] angle setpoint for tilting servo motors */
+	/*** END-CUSOTM ***/
 
 	AlphaFilter<float> _output_lpf_yaw;
 
@@ -163,6 +173,12 @@ private:
 		(ParamFloat<px4::params::MC_ACRO_SUPEXPO>) _param_mc_acro_supexpo,		/**< superexpo stick curve shape (roll & pitch) */
 		(ParamFloat<px4::params::MC_ACRO_SUPEXPOY>) _param_mc_acro_supexpoy,		/**< superexpo stick curve shape (yaw) */
 
-		(ParamBool<px4::params::MC_BAT_SCALE_EN>) _param_mc_bat_scale_en
+		(ParamBool<px4::params::MC_BAT_SCALE_EN>) _param_mc_bat_scale_en,
+
+		/*** CUSTOM ***/
+		(ParamFloat<px4::params::CA_SV_TL0_MINA>) _param_tilt_min_angle,
+		(ParamFloat<px4::params::CA_SV_TL0_MAXA>) _param_tilt_max_angle,
+		(ParamInt<px4::params::MC_PITCH_ON_TILT>)   _param_mpc_pitch_on_tilt
+		/*** END-CUSTOM ***/
 	)
 };

@@ -16,3 +16,8 @@ bool reset_integral	# Reset roll/pitch/yaw integrals (navigation logic change)
 bool fw_control_yaw_wheel	# control heading with steering wheel (used for auto takeoff on runway)
 
 # TOPICS vehicle_attitude_setpoint mc_virtual_attitude_setpoint fw_virtual_attitude_setpoint
+
+#cutom
+float32 roll_body		# body angle in NED frame (can be NaN for FW)
+float32 pitch_body		# body angle in NED frame (can be NaN for FW)
+float32 yaw_body		# body angle in NED frame (can be NaN for FW)

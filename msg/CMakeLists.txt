@@ -40,6 +40,7 @@ set(msg_files
 	AckermannVelocitySetpoint.msg
 	ActionRequest.msg
 	ActuatorArmed.msg
+	ActuatorControls.msg
 	ActuatorControlsStatus.msg
 	ActuatorOutputs.msg
 	ActuatorServosTrim.msg
@@ -263,6 +264,8 @@ set(msg_files
 	versioned/VehicleRatesSetpoint.msg
 	versioned/VehicleStatus.msg
 	versioned/VtolVehicleStatus.msg
+	tilting_mc_desired_angles.msg
+	tilting_servo_sp.msg
 )
 list(SORT msg_files)
 

@@ -59,6 +59,9 @@
 #include <lib/slew_rate/SlewRate.hpp>
 #include <lib/stick_yaw/StickYaw.hpp>
 
+#include <uORB/topics/tilting_mc_desired_angles.h>
+#include <uORB/topics/tilting_servo_sp.h>
+
 #include <AttitudeControl.hpp>
 
 using namespace time_literals;
@@ -94,7 +97,7 @@ private:
 	/**
 	 * Generate & publish an attitude setpoint from stick inputs
 	 */
-	void generate_attitude_setpoint(const matrix::Quatf &q, float dt);
+	void generate_attitude_setpoint(const matrix::Quatf &q, float dt, bool reset_yaw_sp);
 
 	AttitudeControl _attitude_control; /**< class for attitude control calculations */
 	StickYaw _stick_yaw{this};
@@ -122,6 +125,8 @@ private:
 
 	matrix::Vector3f _thrust_setpoint_body; /**< body frame 3D thrust vector */
 
+	float _man_yaw_sp{0.f};				/**< current yaw setpoint in manual mode */
+
 	float _hover_thrust_estimate{NAN};
 	SlewRate<float> _hover_thrust_slew_rate{.5f};
 
@@ -140,12 +145,18 @@ private:
 
 	bool _spooled_up{false}; ///< used to make sure the vehicle cannot take off during the spoolup time
 	bool _landed{true};
+	bool _reset_yaw_sp{true};
 	bool _vehicle_type_rotary_wing{true};
 	bool _vtol{false};
 	bool _vtol_tailsitter{false};
 	bool _vtol_in_transition_mode{false};
 
 	uint8_t _quat_reset_counter{0};
+
+	/*** CUSTOM ***/
+
+	uORB::Publication<tilting_servo_sp_s>	_tilting_servo_pub{ORB_ID(tilting_servo_setpoint)};
+	/*** END-CUSTOM ***/
 
 	DEFINE_PARAMETERS(
 		(ParamInt<px4::params::MC_AIRMODE>)         _param_mc_airmode,
@@ -169,6 +180,16 @@ private:
 		(ParamInt<px4::params::MPC_THR_CURVE>) _param_mpc_thr_curve,
 		(ParamFloat<px4::params::MPC_YAW_EXPO>) _param_mpc_yaw_expo,
 
-		(ParamFloat<px4::params::COM_SPOOLUP_TIME>) _param_com_spoolup_time
+		(ParamFloat<px4::params::COM_SPOOLUP_TIME>) _param_com_spoolup_time,
+
+		/*** CUSTOM ***/
+
+		(ParamInt<px4::params::MC_PITCH_ON_TILT>)   _param_mpc_pitch_on_tilt,   /**< map the pitch angle on the tilt */
+		(ParamInt<px4::params::CA_AIRFRAME>)	    _param_airframe,		/**< 11: tilting multirotor */
+		(ParamFloat<px4::params::MC_DES_PITCH_MAX>) _param_des_pitch_max,	/**< maximum desired pitch for tilting drones*/
+		(ParamFloat<px4::params::MC_DES_PITCH_MIN>) _param_des_pitch_min,	/**< minimum desired pitch for tilting drones*/
+		(ParamFloat<px4::params::MC_DES_ROLL_MAX>)  _param_des_roll_max,	/**< maximum desired roll for tilting drones*/
+		(ParamFloat<px4::params::MC_DES_ROLL_MIN>)  _param_des_roll_min		/**< minimum desired roll for tilting drones*/
+		/*** END-CUSTOM ***/
 	)
 };
